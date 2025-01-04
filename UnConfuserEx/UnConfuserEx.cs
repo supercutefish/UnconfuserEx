@@ -26,7 +26,7 @@ namespace UnConfuserEx
                 return 1;
             }
 
-            var path = args[0];
+            var path = Path.GetFullPath(args[0]);
             if (!File.Exists(path))
             {
                 Logger.Error($"File {path} does not exist");
