@@ -54,6 +54,12 @@ namespace UnConfuserEx.Protections.ControlFlow
             }
 
             var instrs = curBlock.Instructions;
+
+            if (instrs.Count < 3)
+            {
+                return false;
+            }
+
             for (int i = 0; i < instrs.Count; i++)
             {
                 if (instrs[i].OpCode == OpCodes.Switch &&
