@@ -27,6 +27,7 @@ namespace UnConfuserEx.Protections
         }
 
         MethodDef? decryptMethod;
+        IList<Instruction>? decryptInstructions;
 
         string IProtection.Name => "AntiTamper";
 
@@ -39,6 +40,28 @@ namespace UnConfuserEx.Protections
 
         public bool Remove(ref ModuleDefMD module)
         {
+            if (ControlFlowRemover.IsMethodObfuscated(decryptMethod!))
+            {
+                Logger.Debug("Detected that the decrypt method is obfuscated, attempting to deobfuscate");
+                try
+                {
+                    var deobfuscatedBlocks = ControlFlowRemover.DeobfuscateMethod(ref module, decryptMethod!);
+
+                    IList<ExceptionHandler> exceptionHandlers;
+                    deobfuscatedBlocks.GetCode(out decryptInstructions, out exceptionHandlers);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("Failed to remove obfuscation from the decrypt method");
+                    Logger.Error(ex.StackTrace);
+                    return false;
+                }
+            }
+            else
+            {
+                decryptInstructions = decryptMethod!.Body.Instructions;
+            }
+
             ImageSectionHeader? encryptedSection = GetEncryptedSection(module);
             if (encryptedSection == null)
             {
@@ -86,7 +109,7 @@ namespace UnConfuserEx.Protections
         {
             int name = -1;
             
-            var instrs = decryptMethod!.Body.Instructions;
+            var instrs = decryptInstructions!;
             for (int i = 0; i < instrs.Count - 2; i++)
             {
                 if (instrs[i].OpCode == OpCodes.Ldloc_S
@@ -121,7 +144,7 @@ namespace UnConfuserEx.Protections
 
         private uint[]? GetInitialKeys()
         {
-            var instrs = decryptMethod!.Body.Instructions;
+            var instrs = decryptInstructions!;
             int firstInstr = -1;
             for (int i = 0; i < instrs.Count - 1; i++)
             {
@@ -164,7 +187,7 @@ namespace UnConfuserEx.Protections
              * 1105     : ldloc.s   V_5
              * 
              */
-            var instrs = decryptMethod!.Body.Instructions;
+            var instrs = decryptInstructions!;
 
             var firstInstr = -1;
             for (int i = 0; i < instrs.Count - 1; i++)
@@ -309,9 +332,7 @@ namespace UnConfuserEx.Protections
             ModuleDefMD newModule = ModuleDefMD.Load(stream);
             module = newModule;
 
-            decryptMethod = GetDecryptMethod(module)!;
-
-            module.GlobalType.Methods.Remove(decryptMethod);
+            module.GlobalType.Methods.Remove(decryptMethod!);
             module.GlobalType.FindStaticConstructor().Body.Instructions.RemoveAt(0);
 
             return true;

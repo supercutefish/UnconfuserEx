@@ -39,14 +39,12 @@ namespace UnConfuserEx
 
             var pipeline = new List<IProtection>
             {
-                new ControlFlowRemover(),
-
                 // If this is present, it MUST be removed first
                 new AntiTamperRemover(),
 
                 new ControlFlowRemover(),
-                new ConstantsRemover(),
                 new ResourcesRemover(),
+                new ConstantsRemover(),
                 new RefProxyRemover(),
                 new AntiDumpRemover(),
                 new AntiDebugRemover(),

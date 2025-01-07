@@ -2,11 +2,9 @@
 using dnlib.DotNet.Emit;
 using log4net;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace UnConfuserEx
 {
@@ -14,35 +12,65 @@ namespace UnConfuserEx
     {
         private static ILog Logger = LogManager.GetLogger("Utils");
 
-        public static byte[]? DecompressDataLZMA(byte[] data)
+        public static byte[] DecompressLZMA(byte[] data, MethodDef initMethod)
         {
-            var stream = new MemoryStream(data);
-            var decompressedStream = new MemoryStream();
+            int sizeBytes = GetUncompressedSizeBytes(initMethod);
+
+            MemoryStream inStream = new MemoryStream(data);
+            MemoryStream outStream = new MemoryStream();
             var decoder = new SevenZip.Compression.LZMA.Decoder();
 
-            var properties = new byte[5];
-            if (stream.Read(properties, 0, 5) != 5)
+            var props = new byte[5];
+            if (inStream.Read(props, 0, 5) != 5)
             {
-                Logger.Error("LZMA stream is too short");
-                return null;
+                throw new Exception("Failed to read LZMA properties");
             }
-            decoder.SetDecoderProperties(properties);
+            Logger.Debug($"LZMA properties => {props[0]:X} {props[1]:X} {props[2]:X} {props[3]:X} {props[4]:X}");
+            decoder.SetDecoderProperties(props);
 
-            // TODO: I've seen some binaries where this is actually a long
-            //       so should probably handle both cases?
-
-            byte[] size = new byte[4];
-            if (stream.Read(size, 0, sizeof(int)) != sizeof(int))
+            var size = new byte[8];
+            if (inStream.Read(size, 0, sizeBytes) != sizeBytes)
             {
-                Logger.Error("Failed to read stream length");
-                return null;
+                throw new Exception("Failed to read uncompressed size");
             }
+            long uncompressedSize = BitConverter.ToInt64(size);
+            long compressedSize = inStream.Length - inStream.Position;
 
-            long uncompressedSize = BitConverter.ToInt32(size);
+            Logger.Debug($"Compressed bytes: 0x{compressedSize:X} -> Uncompressed bytes: 0x{uncompressedSize:X}");
 
-            long compressedSize = stream.Length - stream.Position;
-            decoder.Code(stream, decompressedStream, compressedSize, uncompressedSize, null);
-            return decompressedStream.ToArray();
+            decoder.Code(inStream, outStream, compressedSize, uncompressedSize, null);
+            return outStream.ToArray();
+        }
+
+        private static int GetUncompressedSizeBytes(MethodDef initMethod)
+        {
+            // Iterate through all instructions to find the call to the decompress method
+            foreach (var instr in initMethod.Body.Instructions)
+            {
+                if (instr.OpCode != OpCodes.Call || instr.Operand is not MethodDef callee)
+                {
+                    continue;
+                }
+
+                if (callee.Signature.ToString() != "System.Byte[] (System.Byte[])")
+                {
+                    continue;
+                }
+
+                // Attempt to find the number of bytes representing the uncompressed size
+                var instrs = callee.Body.Instructions;
+                for (int i = 0; i < instrs.Count - 1; i++)
+                {
+                    if (instrs[i].IsLdcI4() && instrs[i+1].OpCode == OpCodes.Blt_S && instrs[i].GetLdcI4Value() != 5)
+                    {
+                        Logger.Debug($"Using {instrs[i].GetLdcI4Value()} bytes for the uncompressed size");
+                        return instrs[i].GetLdcI4Value();
+                    }
+                }
+
+            }
+            Logger.Warn("Failed to find number of bytes used by the uncompressed size. Defaulting to 4");
+            return 4;
         }
 
         private static char[] InvalidChars = "!@#$%^&*()-=+\\,<>".ToArray();

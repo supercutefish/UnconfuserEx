@@ -3,11 +3,7 @@ using dnlib.DotNet.Emit;
 using log4net;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 using UnConfuserEx.Protections.Resources;
 
 namespace UnConfuserEx.Protections
@@ -24,6 +20,7 @@ namespace UnConfuserEx.Protections
 
         public string Name => "Resources";
 
+        int callIndex;
         MethodDef? initializeMethod;
         byte[]? data;
 
@@ -40,10 +37,11 @@ namespace UnConfuserEx.Protections
 
             IList<Instruction> instrs;
 
-            // Check the first call in the cctor first
-            if (cctor.Body.Instructions[0].OpCode == OpCodes.Call)
+            // Check the first calls in the constructor
+            callIndex = 0;
+            while (cctor.Body.Instructions[callIndex].OpCode == OpCodes.Call)
             {
-                var method = cctor.Body.Instructions[0].Operand as MethodDef;
+                var method = cctor.Body.Instructions[callIndex].Operand as MethodDef;
 
                 instrs = method!.Body.Instructions;
                 for (int i = 0; i < instrs.Count - 3; i++)
@@ -54,7 +52,7 @@ namespace UnConfuserEx.Protections
                         && instrs[i + 2].OpCode == OpCodes.Ldnull
                         && instrs[i + 3].OpCode == OpCodes.Ldftn)
                     {
-                        
+
                         assemblyField = instrs[i].Operand as FieldDef;
                         initializeMethod = method;
                         handlerMethod = instrs[i + 3].Operand as MethodDef;
@@ -62,7 +60,9 @@ namespace UnConfuserEx.Protections
                         return true;
                     }
                 }
+                callIndex++;
             }
+            callIndex = -1;
 
             // If we didn't find it there, check the cctor itself
             instrs = cctor.Body.Instructions;
@@ -98,11 +98,7 @@ namespace UnConfuserEx.Protections
                 return false;
             }
 
-            if (!DecompressData())
-            {
-                Logger.Error("Failed to decompress resource data");
-                return false;
-            }
+            data = Utils.DecompressLZMA(data!, initializeMethod!);
 
             var loadedModule = ModuleDefMD.Load(data);
             foreach (var resource in loadedModule.Resources)
@@ -119,15 +115,17 @@ namespace UnConfuserEx.Protections
             module.GlobalType.Fields.Remove(assemblyField);
             module.GlobalType.Fields.Remove(dataField);
 
-            //  Remove call to the initialize method
-            if (initializeMethod == module.GlobalType.FindStaticConstructor())
+            var cctor = module.GlobalType.FindStaticConstructor();
+
+            // Remove the decryption call/instructions
+            if (callIndex == -1)
             {
                 // TODO: Is this ever actually in the static constructor?
+                throw new NotImplementedException("Resources init was in the static constructor");
             }
             else
             {
-                // It's the first call in the cctor
-                module.GlobalType.FindStaticConstructor().Body.Instructions.RemoveAt(0);
+                cctor.Body.Instructions.RemoveAt(callIndex);
                 module.GlobalType.Methods.Remove(initializeMethod);
             }
 
@@ -220,16 +218,6 @@ namespace UnConfuserEx.Protections
 
             data = decryptor.Decrypt(key, uintData);
 
-            return true;
-        }
-
-        private bool DecompressData()
-        {
-            var decompressed = Utils.DecompressDataLZMA(data!);
-            if (decompressed == null)
-                return false;
-
-            data = decompressed;
             return true;
         }
     }

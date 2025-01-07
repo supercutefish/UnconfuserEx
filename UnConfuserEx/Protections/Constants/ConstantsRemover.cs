@@ -27,6 +27,7 @@ namespace UnConfuserEx.Protections
 
         public string Name => "Constants";
 
+        int callIndex;
         MethodDef? initializeMethod;
         byte[]? data;
         FieldDef? dataField;
@@ -40,10 +41,11 @@ namespace UnConfuserEx.Protections
 
             IList<Instruction> instrs;
 
-            // Check the first call in the cctor first
-            if (cctor.Body.Instructions[0].OpCode == OpCodes.Call)
+            // Check the first calls in the constructor
+            callIndex = 0;
+            while (cctor.Body.Instructions[callIndex].OpCode == OpCodes.Call)
             {
-                var method = cctor.Body.Instructions[0].Operand as MethodDef;
+                var method = cctor.Body.Instructions[callIndex].Operand as MethodDef;
 
                 instrs = method!.Body.Instructions;
                 for (int i = 0; i < instrs.Count - 2; i++)
@@ -53,11 +55,13 @@ namespace UnConfuserEx.Protections
                         && instrs[i + 2].OpCode == OpCodes.Ret)
                     {
                         initializeMethod = method;
-                        
+
                         return true;
                     }
                 }
+                callIndex++;
             }
+            callIndex = -1;
 
             // If we didn't find it there, check the cctor itself
             instrs = cctor.Body.Instructions;
@@ -79,7 +83,10 @@ namespace UnConfuserEx.Protections
             IList<MethodDef> constantGetters = GetAllGetters(module);
 
             if (constantGetters.Count == 0)
+            {
+                Logger.Warn("Failed to find any getters for constants obfuscation. Might not be removed!");
                 return true;
+            }
 
             if (!GetEncryptedData())
             {
@@ -94,11 +101,7 @@ namespace UnConfuserEx.Protections
             }
 
             // Only LZMA is actually implemented?
-            if (!DecompressData())
-            {
-                Logger.Error("[-] Failed to decompress constant data");
-                return false;
-            }
+            data = Utils.DecompressLZMA(data!, initializeMethod!);
 
             var instrs = initializeMethod!.Body.Instructions;
             for (var i = 0; i < instrs.Count; i++)
@@ -149,10 +152,16 @@ namespace UnConfuserEx.Protections
 
             var cctor = module.GlobalType.FindStaticConstructor();
 
-            // Delete the encrypted data and decryption instructions
-            if (initializeMethod == cctor)
+            // Remove the decryption call/instructions
+            if (callIndex == -1)
             {
-                for (int i = 0; i < initializeMethod.Body.Instructions.Count; i++)
+                int offset = 0;
+                while (cctor.Body.Instructions[offset].OpCode == OpCodes.Call)
+                {
+                    offset++;
+                }
+
+                for (int i = offset; i < initializeMethod.Body.Instructions.Count; i++)
                 {
                     var instr = initializeMethod.Body.Instructions[i];
 
@@ -162,16 +171,15 @@ namespace UnConfuserEx.Protections
                     {
                         break;
                     }
-                    initializeMethod.Body.Instructions.RemoveAt(0);
+                    initializeMethod.Body.Instructions.RemoveAt(offset);
                     i--;
                 }
                 initializeMethod.Body.Instructions.UpdateInstructionOffsets();
             }
             else
             {
-                cctor.Body.Instructions.RemoveAt(0);
-                initializeMethod.Body.Instructions.Clear();
-                initializeMethod.Body.Instructions.Add(new Instruction(OpCodes.Ret));
+                cctor.Body.Instructions.RemoveAt(callIndex);
+                module.GlobalType.Methods.Remove(initializeMethod);
             }
             return true;
         }
@@ -319,16 +327,6 @@ namespace UnConfuserEx.Protections
             return true;
         }
 
-        private bool DecompressData()
-        {
-            var decompressed = Utils.DecompressDataLZMA(data!);
-            if (decompressed == null)
-                return false;
-
-            data = decompressed;
-            return true;
-        }
-
         private static IList<MethodDef> GetAllGetters(ModuleDefMD module)
         {
             var methods = module.GlobalType.Methods;
@@ -339,12 +337,18 @@ namespace UnConfuserEx.Protections
                 if (!method.HasBody)
                     continue;
 
-                var instrs = method.Body.Instructions;
-                if (instrs[0].OpCode == OpCodes.Call && instrs[0].Operand.ToString()!.Contains("Assembly::GetExecutingAssembly")
-                    && instrs[1].OpCode == OpCodes.Call && instrs[1].Operand.ToString()!.Contains("Assembly::GetCallingAssembly"))
+                if (method.Signature.ToString()!.Contains("- <!!0>(System."))
                 {
                     getters.Add(method);
                 }
+
+                //var instrs = method.Body.Instructions;
+                //if (instrs[0].OpCode == OpCodes.Call && instrs[0].Operand.ToString()!.Contains("Assembly::GetExecutingAssembly")
+                //    && instrs[1].OpCode == OpCodes.Call && instrs[1].Operand.ToString()!.Contains("Assembly::GetCallingAssembly"))
+                //{
+                //    getters.Add(method);
+                //    Logger.Debug(method.Signature);
+                //}
             }
 
             return getters;

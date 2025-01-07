@@ -47,24 +47,11 @@ namespace UnConfuserEx.Protections
                 {
                     Logger.Debug($"Removing obfuscation from method {method.FullName}");
 
-                    var deobfuscator = new BlocksCflowDeobfuscator();
-                    var blocks = new Blocks(method);
-                    blocks.RemoveDeadBlocks();
-                    blocks.RepartitionBlocks();
-                    blocks.UpdateBlocks();
-
-                    blocks.Method.Body.SimplifyBranches();
-                    blocks.Method.Body.OptimizeBranches();
-                    
-                    deobfuscator.Initialize(blocks);
-                    deobfuscator.Add(new SwitchDeobfuscator(module));
-                    deobfuscator.Deobfuscate();
-
-                    blocks.RepartitionBlocks();
-
+                    var deobfuscatedBlocks = DeobfuscateMethod(ref module, method);
+                   
                     IList<Instruction> instructions;
                     IList<ExceptionHandler> exceptionHandlers;
-                    blocks.GetCode(out instructions, out exceptionHandlers);
+                    deobfuscatedBlocks.GetCode(out instructions, out exceptionHandlers);
                     DotNetUtils.RestoreBody(method, instructions, exceptionHandlers);
 
                     if (IsMethodObfuscated(method))
@@ -74,10 +61,10 @@ namespace UnConfuserEx.Protections
 
                     numSolved++;
                 }
-                catch (Exception e)
+                catch (Exception ex)
                 {
-                    Logger.Error($"Failed to remove obfuscation for method {method.FullName} ({e.Message})");
-                    Logger.Error(e.StackTrace);
+                    Logger.Error($"Failed to remove obfuscation for method {method.FullName} ({ex.Message})");
+                    Logger.Error(ex.StackTrace);
                     numFailed++;
                 }
             }
@@ -94,7 +81,7 @@ namespace UnConfuserEx.Protections
             return true;
         }
 
-        private static bool IsMethodObfuscated(MethodDef method)
+        public static bool IsMethodObfuscated(MethodDef method)
         {
             if (!method.HasBody || method.Body.Instructions.Count == 0)
                 return false;
@@ -122,6 +109,26 @@ namespace UnConfuserEx.Protections
                 }
             }
             return false;
+        }
+
+        public static Blocks DeobfuscateMethod(ref ModuleDefMD module, MethodDef method)
+        {
+            var deobfuscator = new BlocksCflowDeobfuscator();
+            var blocks = new Blocks(method);
+            blocks.RemoveDeadBlocks();
+            blocks.RepartitionBlocks();
+            blocks.UpdateBlocks();
+
+            blocks.Method.Body.SimplifyBranches();
+            blocks.Method.Body.OptimizeBranches();
+
+            deobfuscator.Initialize(blocks);
+            deobfuscator.Add(new SwitchDeobfuscator(module));
+            deobfuscator.Deobfuscate();
+
+            blocks.RepartitionBlocks();
+
+            return blocks;
         }
     }
 }
