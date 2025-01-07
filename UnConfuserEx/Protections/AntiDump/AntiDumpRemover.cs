@@ -13,6 +13,7 @@ namespace UnConfuserEx.Protections.AntiDump
     {
         public string Name => "AntiDump";
 
+        int callIndex;
         MethodDef? antiDumpMethod;
 
         public bool IsPresent(ref ModuleDefMD module)
@@ -24,27 +25,34 @@ namespace UnConfuserEx.Protections.AntiDump
 
             IList<Instruction> instrs;
 
-            // Check the first call in the cctor first
-            if (cctor.Body.Instructions[0].OpCode == OpCodes.Call)
+            // Check the first calls in the constructor
+            callIndex = 0;
+            while (cctor.Body.Instructions[callIndex].OpCode == OpCodes.Call)
             {
-                var method = cctor.Body.Instructions[0].Operand as MethodDef;
+                var method = cctor.Body.Instructions[callIndex].Operand as MethodDef;
+                if (!method!.HasBody)
+                {
+                    callIndex++;
+                    continue;
+                }
 
                 instrs = method!.Body.Instructions;
                 if (instrs.Count > 6 &&
                     instrs[0].OpCode == OpCodes.Ldtoken &&
                     (TypeDef)instrs[0].Operand == module.GlobalType &&
                     instrs[5].OpCode == OpCodes.Call &&
-                    ((IMethodDefOrRef)instrs[5].Operand).Name == "GetHINSTANCE")
+                    ((IMethodDefOrRef)instrs[5].Operand).MethodSig.ToString() == "System.IntPtr (System.Reflection.Module)")
                 {
                     antiDumpMethod = method;
                     return true;
                 }
-
+                callIndex++;
             }
+            callIndex = -1;
 
-            instrs = cctor.Body.Instructions;
 
             // Then check the body itself
+            instrs = cctor.Body.Instructions;
             if (instrs.Count > 6 &&
                 instrs[0].OpCode == OpCodes.Ldtoken &&
                 (TypeDef)instrs[0].Operand == module.GlobalType &&
@@ -64,13 +72,14 @@ namespace UnConfuserEx.Protections.AntiDump
 
             if (antiDumpMethod == cctor)
             {
-                // TODO: This may cause issues
+                // TODO: This will cause issues if any protections were injected afterwards...
                 cctor.Body.Instructions.Clear();
                 cctor.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
             }
             else
             {
-                cctor.Body.Instructions.RemoveAt(0);
+                cctor.Body.Instructions.RemoveAt(callIndex);
+                module.GlobalType.Methods.Remove(antiDumpMethod);
             }
 
             return true;
