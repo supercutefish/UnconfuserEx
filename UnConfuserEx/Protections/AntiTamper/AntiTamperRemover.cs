@@ -273,11 +273,16 @@ namespace UnConfuserEx.Protections
             IList<ImageSectionHeader> sections = module.Metadata.PEImage.ImageSectionHeaders;
             foreach (var section in sections)
             {
+                var sectionName = section.Name;
+                var name1 = sectionName[0] | sectionName[1] << 8 | sectionName[2] << 16 | sectionName[3] << 24;
+                var name2 = sectionName[4] | sectionName[5] << 8 | sectionName[6] << 16 | sectionName[7] << 24;
+                var val = name1 * name2;
+
                 if (section == encryptedSection)
                 {
                     continue;
                 }
-                else
+                else if (val != 0)
                 {
                     var size = section.SizeOfRawData >> 2;
                     var loc = section.PointerToRawData;
@@ -291,6 +296,7 @@ namespace UnConfuserEx.Protections
                     }
                 }
             }
+
             uint[] dst = new uint[16], src = new uint[16];
             for (int i = 0; i < 16; i++)
             {

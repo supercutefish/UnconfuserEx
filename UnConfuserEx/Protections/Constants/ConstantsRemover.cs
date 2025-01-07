@@ -46,6 +46,11 @@ namespace UnConfuserEx.Protections
             while (cctor.Body.Instructions[callIndex].OpCode == OpCodes.Call)
             {
                 var method = cctor.Body.Instructions[callIndex].Operand as MethodDef;
+                if (!method!.HasBody)
+                {
+                    callIndex++;
+                    continue;
+                }
 
                 instrs = method!.Body.Instructions;
                 for (int i = 0; i < instrs.Count - 2; i++)

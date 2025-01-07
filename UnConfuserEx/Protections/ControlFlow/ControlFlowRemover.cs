@@ -48,7 +48,7 @@ namespace UnConfuserEx.Protections
                     Logger.Debug($"Removing obfuscation from method {method.FullName}");
 
                     var deobfuscatedBlocks = DeobfuscateMethod(ref module, method);
-                   
+
                     IList<Instruction> instructions;
                     IList<ExceptionHandler> exceptionHandlers;
                     deobfuscatedBlocks.GetCode(out instructions, out exceptionHandlers);
