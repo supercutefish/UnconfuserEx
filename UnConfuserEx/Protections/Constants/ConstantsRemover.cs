@@ -151,6 +151,11 @@ namespace UnConfuserEx.Protections
                 resolver.Resolve(getter, instances.ToList());
 
                 Logger.Debug($"Removed all instances of getter ${getter.FullName}");
+
+                // TODO: Can't remove the method def because sometimes it's still being referenced?
+                //       dnSpy can never find any uses though...?
+                getter.Body.Instructions.Clear();
+                getter.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
             }
 
             module.GlobalType.Fields.Remove(dataField);
@@ -386,11 +391,12 @@ namespace UnConfuserEx.Protections
         {
             var instrs = getter.Body.Instructions;
 
-            if (instrs[5].OpCode == OpCodes.Call)
+            int offset = instrs[0].OpCode == OpCodes.Call && instrs[0].Operand.ToString()!.Contains("Assembly::GetExecutingAssembly") ? 5 : 1;
+            if (instrs[offset].OpCode == OpCodes.Call)
             {
                 return GetterType.X86;
             }
-            else if (instrs[5].IsLdcI4() && instrs[7].IsLdcI4())
+            else if (instrs[offset].IsLdcI4() && instrs[offset + 2].IsLdcI4())
             {
                 return GetterType.Normal;
             }

@@ -1,6 +1,7 @@
 ﻿using dnlib.DotNet;
 using dnlib.DotNet.Emit;
 using MSILEmulator.Instructions.Arithmetic;
+using MSILEmulator.Instructions.Branch;
 using MSILEmulator.Instructions.Load;
 using MSILEmulator.Instructions.Logic;
 using MSILEmulator.Instructions.Store;
@@ -20,21 +21,21 @@ namespace MSILEmulator
         {
             Method = method;
             Instructions = Method.Body.Instructions.ToList();
-            Ctx = new();
+            Ctx = new(Instructions);
         }
 
         public ILMethod(MethodDef method, int start, int end)
         {
             Method = method;
             Instructions = Method.Body.Instructions.Skip(start).Take(end - start).ToList();
-            Ctx = new();
+            Ctx = new(Instructions);
         }
 
         public ILMethod(IEnumerable<Instruction> instructions)
         {
             Method = null;
             Instructions = instructions.ToList();
-            Ctx = new();
+            Ctx = new(Instructions);
         }
 
         public void SetArg(int index, object value)
@@ -55,6 +56,11 @@ namespace MSILEmulator
                 var instr = Instructions[i];
 
                 i = EmulateInstruction(Ctx, instr, i);
+
+                if (i == -1)
+                {
+                    break;
+                }
             }
 
             return Ctx;
@@ -65,9 +71,11 @@ namespace MSILEmulator
 
             switch (instr.OpCode.Code)
             {
-
                 // Load
                 case Code.Ldc_I4:
+                case Code.Ldc_I4_S:
+                    ctx.Stack.Push(instr.GetLdcI4Value());
+                    break;
                 case Code.Ldc_I4_0:
                 case Code.Ldc_I4_1:
                 case Code.Ldc_I4_2:
@@ -77,11 +85,14 @@ namespace MSILEmulator
                 case Code.Ldc_I4_6:
                 case Code.Ldc_I4_7:
                 case Code.Ldc_I4_8:
-                case Code.Ldc_I4_S:
-                    LdcI4.Emulate(ctx, instr);
+                    ctx.Stack.Push((int)instr.OpCode.Code - (int)Code.Ldc_I4_0);
                     break;
                 case Code.Ldc_I4_M1:
-                    LdcI4_M1.Emulate(ctx);
+                    ctx.Stack.Push((int)-1);
+                    break;
+
+                case Code.Ldc_I8:
+                    ctx.Stack.Push((long)instr.Operand);
                     break;
 
                 case Code.Ldarg:
@@ -161,6 +172,36 @@ namespace MSILEmulator
                 case Code.Xor:
                     Xor.Emulate(ctx);
                     break;
+
+
+                // Branching
+                case Code.Br:
+                case Code.Br_S:
+                    return ctx.Offsets[((Instruction)instr.Operand).Offset];
+                case Code.Beq:
+                case Code.Beq_S:
+                    return Beq.Emulate(ctx, instr);
+                case Code.Bne_Un:
+                case Code.Bne_Un_S:
+                    return Bne.Emulate(ctx, instr);
+
+                // Conversion
+                case Code.Conv_U8:
+                    var type = ctx.Stack.Peek().GetType();
+                    if (type == typeof(int))
+                        ctx.Stack.Push((long)(int)ctx.Stack.Pop());
+                    else
+                        throw new NotImplementedException();
+                    break;
+
+
+                // Misc
+                case Code.Nop:
+                    // ...No-op
+                    break;
+
+                case Code.Ret:
+                    return -1;
 
                 default:
                     throw new EmulatorException($"Unhandled OpCode {instr.OpCode}");

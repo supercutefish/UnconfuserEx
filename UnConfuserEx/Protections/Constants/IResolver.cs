@@ -3,9 +3,10 @@ using dnlib.DotNet.Emit;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 using System.Runtime.InteropServices;
 using System.Text;
+using de4dot.blocks;
+using MSILEmulator;
 
 namespace UnConfuserEx.Protections.Constants
 {
@@ -17,18 +18,102 @@ namespace UnConfuserEx.Protections.Constants
 
         protected (int stringId, int numId, int objectId) GetIdsFromGetter(MethodDef getter)
         {
-            var locals = getter.Body.Variables;
-            var keyLocal = getter.Body.Variables.Locals[0];
+            var blocks = new Blocks(getter);
+            blocks.RemoveDeadBlocks();
 
-            var indices = getter.Body.Instructions
-                .Where(i => i.IsLdloc() && i.GetLocal(locals) == keyLocal)
-                .Select(i => getter.Body.Instructions.IndexOf(i) + 1).ToList();
+            int blocksFound = 0;
+            foreach (var block in blocks.MethodBlocks.GetAllBlocks())
+            {
+                // Replace each decode block with a known ldc.i4 for each decode type
+                foreach (var instr in block!.Instructions)
+                {
+                    if (instr.OpCode == OpCodes.Newarr)
+                    {
+                        block.Instructions.Clear();
+                        block.Instructions.Add(new Instr(Instruction.CreateLdcI4(0xAA)));
+                        block.Instructions.Add(new Instr(Instruction.Create(OpCodes.Ret)));
+                        blocksFound++;
+                        break;
+                    }
+                    else if (instr.OpCode == OpCodes.Ldtoken)
+                    {
+                        block.Instructions.Clear();
+                        block.Instructions.Add(new Instr(Instruction.CreateLdcI4(0xBB)));
+                        block.Instructions.Add(new Instr(Instruction.Create(OpCodes.Ret)));
+                        blocksFound++;
+                        break;
+                    }
+                    else if (instr.OpCode == OpCodes.Call && instr.Operand is IMethodDefOrRef callee && callee.Name.Contains("get_UTF8"))
+                    {
+                        block.Instructions.Clear();
+                        block.Instructions.Add(new Instr(Instruction.CreateLdcI4(0xCC)));
+                        block.Instructions.Add(new Instr(Instruction.Create(OpCodes.Ret)));
+                        blocksFound++;
+                        break;
+                    }
+                }
 
-            var stringId = getter.Body.Instructions[indices[0]].GetLdcI4Value();
-            var numId = getter.Body.Instructions[indices[1]].GetLdcI4Value();
-            var objectId = getter.Body.Instructions[indices[2]].GetLdcI4Value();
+                // Replace every instruction that isn't a ldloc, ldc.i4, ret, or a branch with a nop
+                for (int i = 0; i < block.Instructions.Count; i++)
+                {
+                    var instr = block.Instructions[i];
+                    if (instr.IsLdloc() ||
+                        instr.IsLdcI4() ||
+                        instr.OpCode == OpCodes.Ldc_I8 ||
+                        instr.OpCode == OpCodes.Conv_U8 ||
+                        instr.OpCode == OpCodes.Ret ||
+                        instr.IsConditionalBranch() || instr.IsBr())
+                    {
+                        continue;
+                    }
+                    block.Instructions[i] = new Instr(Instruction.Create(OpCodes.Nop));
+                }
+            }
 
-            return (stringId, numId, objectId);
+            if (blocksFound != 3)
+            {
+                throw new Exception("Failed to get constant getter ids");
+            }
+
+            IList<Instruction> instructions;
+            IList<ExceptionHandler> exceptionHandlers;
+            blocks.GetCode(out instructions, out exceptionHandlers);
+
+            // Delete instructions up until the first ldloc.0
+            while (instructions.Count > 0 && !instructions[0].IsLdloc())
+            {
+                instructions.RemoveAt(0);
+            }
+
+            // Emulate the branching to find the correct IDs
+            int? stringId = null, numId = null, objectId = null;
+            for (int i = 0; i < 4; i++)
+            {
+                var ilMethod = new ILMethod(instructions);
+                ilMethod.SetLocal(0, i);
+                ilMethod.SetLocal(1, 0xDD);
+
+                var ctx = ilMethod.Emulate();
+                switch (ctx.Stack.Peek())
+                {
+                    case 0xAA:
+                        numId = i;
+                        break;
+                    case 0xBB:
+                        objectId = i;
+                        break;
+                    case 0xCC:
+                        stringId = i;
+                        break;
+                    case 0xDD:
+                        // Default constants
+                        break;
+                    default:
+                        throw new Exception("asdasdasd");
+                }
+            }
+
+            return ((int)stringId!, (int)numId!, (int)objectId!);
         }
 
         protected int GetNextInstanceInMethod(MethodDef getter, MethodDef method, out TypeSig? genericType)
@@ -62,7 +147,10 @@ namespace UnConfuserEx.Protections.Constants
         protected void FixStringConstant(MethodDef method, int instrOffset, int id)
         {
             uint count = (uint)(data![id] | (data[id + 1] << 8) | (data[id + 2] << 16) | (data[id + 3] << 24));
-            //count = (count << 4) | (count >> 0x1C);
+            if (count > data.Length)
+            {
+                count = (count << 4) | (count >> 0x1C);
+            }
             string result = string.Intern(Encoding.UTF8.GetString(data, id + 4, (int)count));
 
             method.Body.Instructions[instrOffset].OpCode = OpCodes.Ldstr;

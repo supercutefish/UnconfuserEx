@@ -37,7 +37,7 @@ namespace UnConfuserEx
             long compressedSize = inStream.Length - inStream.Position;
 
             Logger.Debug($"Compressed bytes: 0x{compressedSize:X} -> Uncompressed bytes: 0x{uncompressedSize:X}");
-
+            
             decoder.Code(inStream, outStream, compressedSize, uncompressedSize, null);
             return outStream.ToArray();
         }

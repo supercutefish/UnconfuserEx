@@ -41,15 +41,19 @@ namespace UnConfuserEx
             {
                 // If this is present, it MUST be removed first
                 new AntiTamperRemover(),
-
+                
+                // This must then be removed second
                 new ControlFlowRemover(),
+
+                // And these can all be removed in any order
                 new ResourcesRemover(),
                 new ConstantsRemover(),
                 new RefProxyRemover(),
                 new AntiDumpRemover(),
-                new AntiDebugRemover(),
                 new UnicodeRemover(),
 
+                // Except for this, which requires constants to be removed
+                new AntiDebugRemover(),
             };
 
             foreach (var p in pipeline)
@@ -98,6 +102,7 @@ namespace UnConfuserEx
                 else
                 {
                     NativeModuleWriterOptions writerOptions = new NativeModuleWriterOptions(module, true);
+                    //writerOptions.Logger = DummyLogger.NoThrowInstance;
                     module.NativeWrite(newPath, writerOptions);
                 }
             }

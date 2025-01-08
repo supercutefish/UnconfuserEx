@@ -20,8 +20,11 @@ namespace UnConfuserEx.Protections.Constants
 
         public override void Resolve(MethodDef getter, IList<MethodDef> instances)
         {
-            var key1 = (int)getter.Body.Instructions[5].Operand;
-            var key2 = (int)getter.Body.Instructions[7].Operand;
+            var instrs = getter.Body.Instructions;
+            int offset = instrs[0].OpCode == OpCodes.Call && instrs[0].Operand.ToString()!.Contains("Assembly::GetExecutingAssembly") ? 5 : 1;
+
+            var key1 = (int)instrs[offset].Operand;
+            var key2 = (int)instrs[offset + 2].Operand;
 
             var (stringId, numId, objectId) = GetIdsFromGetter(getter);
 
@@ -37,7 +40,7 @@ namespace UnConfuserEx.Protections.Constants
 
                 while (instanceOffset != -1)
                 {
-                    var instrs = method.Body.Instructions;
+                    instrs = method.Body.Instructions;
 
                     var id = instrs[instanceOffset].GetLdcI4Value();
                     id = (id * key1) ^ key2;
